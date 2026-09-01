@@ -31,6 +31,10 @@ export type TelegramConfig = {
   allowedUserId?: number;
   /** One-time local pairing code required before allowedUserId is set. */
   pairingCode?: string;
+  /** Epoch ms when the current pairing code expires. */
+  pairingCodeExpiresAt?: number;
+  /** Mismatched /pair attempts against the current code; rotation at the cap. */
+  pairingAttempts?: number;
   /** Last chat that interacted with the bot. */
   activeChatId?: number;
   lastUpdateId?: number;
