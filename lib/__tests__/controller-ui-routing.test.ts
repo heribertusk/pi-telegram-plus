@@ -99,6 +99,55 @@ describe("Telegram controller UI routing", () => {
     expect(activeMode).toBe("tui");
   });
 
+  it("survives Object.assign/spread copying while a Telegram turn is active", async () => {
+    // pi's ExtensionRunner.wrapUIPromptContext copies the UI object via own
+    // enumerable properties. The routed proxy used to report none, silently
+    // stripping every method from the copy (subagent spawn crashed on
+    // "ctx.ui.setWidget is not a function").
+    const sent: Array<{ chatId: number; text: string }> = [];
+    const transport = createTransport(sent);
+    const tuiUi = { notify: async () => undefined, setWidget: () => undefined, baseOnly: () => "base" };
+    let currentUi: any = tuiUi;
+    const commandCtx: any = { isIdle: () => false, waitForIdle: async () => undefined };
+    Object.defineProperty(commandCtx, "ui", { get: () => currentUi });
+    const session = {
+      extensionRunner: {
+        getUIContext: () => currentUi,
+        setUIContext: (ui: unknown) => { currentUi = ui; },
+        getCommand: () => undefined,
+        createCommandContext: () => commandCtx,
+      },
+    } as any;
+    let copiedDuringTurn: Record<string, unknown> = {};
+    const commands = new Map<string, (args: string, ctx: any) => Promise<void>>([
+      ["spreadcheck", async (_args, ctx) => {
+        copiedDuringTurn = { ...ctx.ui };
+      }],
+    ]);
+    const uiRuntime = createTelegramUiRuntime({ getSession: () => session, transport });
+    const controller = createTelegramController({
+      getSession: () => session,
+      transport,
+      ui: uiRuntime,
+      authorizeUser: async () => true,
+      setActiveChatId: async () => undefined,
+      getBotUsername: () => "test-bot",
+      getMessageMode: () => "queue",
+      telegramCommands: commands,
+      getActiveTurn: () => undefined,
+      beginTelegramTurn: (chatId: number, replaceMessageId?: number) => ({ chatId, queuedAttachments: [], replaceMessageId }),
+      endTelegramTurn: () => undefined,
+    });
+
+    await controller.handleMessage({ message_id: 1, chat: { id: 111 }, from: { id: 1 }, text: "/spreadcheck" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(typeof copiedDuringTurn.notify).toBe("function");
+    expect(typeof copiedDuringTurn.setWidget).toBe("function");
+    expect("baseOnly" in copiedDuringTurn).toBe(false);
+    expect(currentUi).toBe(tuiUi);
+  });
+
   it("keeps overlapping Telegram command UIs isolated by thread inside the same chat", async () => {
     const sent: Array<{ chatId: number; text: string; messageThreadId?: number; replyToMessageId?: number }> = [];
     const transport = createTransport(sent);

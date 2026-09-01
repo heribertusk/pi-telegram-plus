@@ -212,24 +212,43 @@ function isSameTelegramTurnTarget(currentTurn: TelegramTurn | undefined, turn: T
     && currentTurn.sourceMessageId === turn.sourceMessageId;
 }
 
-function createRoutedTelegramUi(baseUi: unknown, telegramUi: ExtensionUIContext, turn: TelegramTurn): ExtensionUIContext {
+export function createRoutedTelegramUi(baseUi: unknown, telegramUi: ExtensionUIContext, turn: TelegramTurn): ExtensionUIContext {
+  // Resolved per access: Telegram UI while this turn is active, base otherwise.
+  const resolveTarget = () => {
+    const currentTurn = getCurrentTelegramTurn();
+    return (isSameTelegramTurnTarget(currentTurn, turn) ? telegramUi : baseUi) as object | undefined;
+  };
   return new Proxy({}, {
     get(_target, prop, receiver) {
       if (prop === "__piTelegramPlusRoutedUi") return true;
-      const currentTurn = getCurrentTelegramTurn();
-      const target = isSameTelegramTurnTarget(currentTurn, turn) ? telegramUi : baseUi;
+      const target = resolveTarget();
       const value = Reflect.get((target ?? {}) as object, prop, receiver);
       return typeof value === "function" ? value.bind(target) : value;
     },
     set(_target, prop, value, receiver) {
-      const currentTurn = getCurrentTelegramTurn();
-      const target = isSameTelegramTurnTarget(currentTurn, turn) ? telegramUi : baseUi;
+      const target = resolveTarget();
       return Reflect.set((target ?? {}) as object, prop, value, receiver);
     },
     has(_target, prop) {
-      const currentTurn = getCurrentTelegramTurn();
-      const target = isSameTelegramTurnTarget(currentTurn, turn) ? telegramUi : baseUi;
+      const target = resolveTarget();
       return prop in ((target ?? {}) as object);
+    },
+    // pi's ExtensionRunner.wrapUIPromptContext copies the UI via Object.assign
+    // (own enumerable properties). A Proxy over {} reports no own keys, which
+    // silently strips every method from the copy — e.g. subagent panes crash on
+    // "ctx.ui.setWidget is not a function". Forward key enumeration to the
+    // resolved target so spread/assign copies the real methods.
+    ownKeys() {
+      const target = resolveTarget();
+      return Reflect.ownKeys((target ?? {}) as object);
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      const target = resolveTarget();
+      const desc = Reflect.getOwnPropertyDescriptor((target ?? {}) as object, prop);
+      // Proxy invariant: properties absent from the proxy target (ours is {})
+      // may only be reported as configurable.
+      if (desc) desc.configurable = true;
+      return desc;
     },
   }) as ExtensionUIContext;
 }
