@@ -7,7 +7,7 @@ import {
     formatToolFailureBrief,
 } from "./renderer.ts";
 import type { TelegramConfig, TelegramRenderLevel, TelegramTransport } from "./types.ts";
-import { RENDER_LEVELS } from "./types.ts";
+import { DEFAULT_REPLAY_LIMIT, RENDER_LEVELS } from "./types.ts";
 
 export type TelegramHistoryEntry = {
     type?: string;
@@ -28,6 +28,7 @@ export type TelegramHistoryReplayItem =
 export type TelegramHistoryReplay = {
     items: TelegramHistoryReplayItem[];
     messageCount: number;
+    totalMessageCount: number;
 };
 
 export type TelegramHistoryReplayTarget = {
@@ -69,17 +70,42 @@ function pushPhotos(
     }
 }
 
+function isReplayableRole(role?: string): boolean {
+    return role === "user" || role === "assistant" || role === "toolResult";
+}
+
+function countReplayableMessages(entries: TelegramHistoryEntry[]): number {
+    return entries.filter((entry) => entry.type === "message" && entry.message && isReplayableRole(entry.message.role)).length;
+}
+
+export function sliceLastTurns(entries: TelegramHistoryEntry[], turnLimit: number): TelegramHistoryEntry[] {
+    if (!Number.isFinite(turnLimit) || turnLimit <= 0) return [];
+    let userTurns = 0;
+    for (let i = entries.length - 1; i >= 0; i--) {
+        const entry = entries[i];
+        if (entry.type === "message" && entry.message?.role === "user") {
+            userTurns++;
+            if (userTurns >= turnLimit) {
+                return entries.slice(i);
+            }
+        }
+    }
+    return entries;
+}
+
 export function buildTelegramHistoryReplay(
     entries: TelegramHistoryEntry[],
     config: TelegramConfig,
 ): TelegramHistoryReplay {
+    const totalMessageCount = countReplayableMessages(entries);
+    const scoped = sliceLastTurns(entries, config.replayLimit ?? DEFAULT_REPLAY_LIMIT);
     const items: TelegramHistoryReplayItem[] = [];
     const toolArguments = new Map<string, unknown>();
     const thinkingLevel = renderLevel(config, "thinking");
     const toolLevel = renderLevel(config, "tool");
     let messageCount = 0;
 
-    for (const entry of entries) {
+    for (const entry of scoped) {
         if (entry.type !== "message" || !entry.message) continue;
         const message = entry.message;
         if (message.role === "user") {
@@ -151,7 +177,7 @@ export function buildTelegramHistoryReplay(
         }
     }
 
-    return { items, messageCount };
+    return { items, messageCount, totalMessageCount };
 }
 
 export async function replayTelegramHistory(options: {
@@ -170,7 +196,13 @@ export async function replayTelegramHistory(options: {
         `🔀 <b>Switched to ${escapeHtml(instanceLabel)}</b>`,
         `<b>cwd:</b> <code>${escapeHtml(options.instance.cwd)}</code>`,
         options.instance.model ? `<b>model:</b> ${escapeHtml(options.instance.model)}` : "",
-        `<b>history:</b> ${replay.messageCount} messages`,
+        `<b>history:</b> ${replay.totalMessageCount} messages${
+            replay.messageCount === 0 && replay.totalMessageCount > 0
+                ? " (replay disabled)"
+                : replay.messageCount < replay.totalMessageCount
+                  ? ` (showing last ${replay.messageCount})`
+                  : ""
+        }`,
     ].filter(Boolean).join("\n");
 
     if (options.canContinue && !options.canContinue()) {
@@ -207,9 +239,13 @@ export async function replayTelegramHistory(options: {
     if (options.canContinue && !options.canContinue()) {
         return { messageCount: replay.messageCount, itemCount, aborted: true };
     }
+    const trimmed = replay.messageCount < replay.totalMessageCount;
+    const disabled = replay.messageCount === 0 && replay.totalMessageCount > 0;
     await options.transport.sendText(
         options.target.chatId,
-        `✅ <b>History replay complete.</b>\nNew Telegram messages now route to this instance.`,
+        `✅ <b>History replay complete.</b>\nNew Telegram messages now route to this instance.${
+            trimmed || disabled ? "\nAdjust: /tg-config replay &lt;n&gt; (0 = off)" : ""
+        }`,
         options.target.messageThreadId,
     );
     if (options.canContinue && !options.canContinue()) {

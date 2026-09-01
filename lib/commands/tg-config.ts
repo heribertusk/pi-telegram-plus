@@ -1,12 +1,13 @@
 import type { CommandRegistry, TgConfigDeps } from "./register.ts";
 import type { TelegramConfig, TelegramMessageMode, TelegramRenderLevel } from "../types.ts";
-import { RENDER_LEVELS, MODE_VALUES } from "../types.ts";
+import { RENDER_LEVELS, MODE_VALUES, DEFAULT_REPLAY_LIMIT, REPLAY_LIMIT_MAX } from "../types.ts";
 
 const KEY_LABELS: Record<string, string> = {
   tool: "🔧 Tool rendering",
   thinking: "💭 Thinking rendering",
   mode: "📨 Message mode",
   retry: "🔄 Retry count",
+  replay: "📜 Replay limit",
 };
 
 export function registerTgConfigCommands(
@@ -58,8 +59,19 @@ export function registerTgConfigCommands(
           await deps.persistConfig(next);
           ui.notify(`retryCount set to ${n}`, "info");
           return;
+        } else if (key === "replay") {
+          const n = parseInt(value, 10);
+          if (!Number.isInteger(n) || n < 0 || n > REPLAY_LIMIT_MAX) {
+            ui.notify("Invalid. Use: /tg-config replay <0-500>", "error");
+            return;
+          }
+          const next = { ...config, replayLimit: n };
+          deps.setConfig(next);
+          await deps.persistConfig(next);
+          ui.notify(`replayLimit set to ${n}`, "info");
+          return;
         } else {
-          ui.notify("Invalid key. Use: tool, thinking, mode, or retry", "error");
+          ui.notify("Invalid key. Use: tool, thinking, mode, replay, or retry", "error");
           return;
         }
       }
@@ -70,12 +82,14 @@ export function registerTgConfigCommands(
       const currentThinking = config.thinking ?? "brief";
       const currentMode = config.messageMode ?? "steer";
       const currentRetry = config.retryCount ?? 3;
+      const currentReplay = config.replayLimit ?? DEFAULT_REPLAY_LIMIT;
 
       const choice = await ui.select("⚙️ Telegram Config", [
         `${KEY_LABELS.tool}: ${currentTool}`,
         `${KEY_LABELS.thinking}: ${currentThinking}`,
         `${KEY_LABELS.mode}: ${currentMode}`,
         `${KEY_LABELS.retry}: ${currentRetry}`,
+        `${KEY_LABELS.replay}: ${currentReplay}`,
       ]);
       if (!choice) return;
 
@@ -91,6 +105,20 @@ export function registerTgConfigCommands(
       } else if (choice.startsWith(KEY_LABELS.mode)) {
         selectedKey = "mode";
         current = currentMode;
+      } else if (choice.startsWith(KEY_LABELS.replay)) {
+        // Replay limit is a number, not a select from list
+        const input = await ui.input("Replay limit (0-500)", `Current: ${currentReplay}`);
+        if (!input) return;
+        const n = parseInt(input, 10);
+        if (!Number.isInteger(n) || n < 0 || n > REPLAY_LIMIT_MAX) {
+          ui.notify("Must be a number 0-500", "error");
+          return;
+        }
+        const next = { ...config, replayLimit: n };
+        deps.setConfig(next);
+        await deps.persistConfig(next);
+        ui.notify(`${KEY_LABELS.replay} set to ${n}`, "info");
+        return;
       } else if (choice.startsWith(KEY_LABELS.retry)) {
         // Retry count is a number, not a select from list
         const input = await ui.input("Retry count (0-10)", `Current: ${currentRetry}`);

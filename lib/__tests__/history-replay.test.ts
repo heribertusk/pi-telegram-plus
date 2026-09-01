@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildTelegramHistoryReplay, replayTelegramHistory, type TelegramHistoryEntry } from "../history-replay.ts";
+import {
+    buildTelegramHistoryReplay,
+    replayTelegramHistory,
+    type TelegramHistoryEntry,
+} from "../history-replay.ts";
 import type { TelegramTransport } from "../types.ts";
 
 const entries: TelegramHistoryEntry[] = [
@@ -81,6 +85,148 @@ describe("buildTelegramHistoryReplay", () => {
         expect(text).toContain("successful tool output");
         expect(text).toContain("Command failed");
         expect(replay.items).toContainEqual({ type: "photo", data: "tool-image", caption: "bash output" });
+    });
+});
+
+describe("history replay limit", () => {
+    const turn = (i: number): TelegramHistoryEntry[] => [
+        { type: "message", message: { role: "user", content: `question ${i}` } },
+        {
+            type: "message",
+            message: {
+                role: "assistant",
+                content: [
+                    { type: "toolCall", id: `call-${i}`, name: "read", arguments: { path: `file-${i}.md` } },
+                    { type: "text", text: `answer ${i}` },
+                ],
+            },
+        },
+        {
+            type: "message",
+            message: {
+                role: "toolResult",
+                toolCallId: `call-${i}`,
+                toolName: "read",
+                isError: false,
+                content: [{ type: "text", text: `output ${i}` }],
+            },
+        },
+    ];
+    const threeTurns = [turn(1), turn(2), turn(3)].flat();
+
+    it("keeps only the last N user turns when replayLimit is set", () => {
+        const replay = buildTelegramHistoryReplay(threeTurns, { tool: "full", replayLimit: 1 });
+        const text = textItems(replay);
+
+        expect(text).not.toContain("question 1");
+        expect(text).not.toContain("question 2");
+        expect(text).not.toContain("answer 1");
+        expect(text).toContain("question 3");
+        expect(text).toContain("answer 3");
+        expect(text).toContain("output 3");
+        expect(replay.messageCount).toBe(3);
+        expect(replay.totalMessageCount).toBe(9);
+    });
+
+    it("returns only the banner when replayLimit is 0", () => {
+        const replay = buildTelegramHistoryReplay(threeTurns, { replayLimit: 0 });
+
+        expect(replay.items).toEqual([]);
+        expect(replay.messageCount).toBe(0);
+        expect(replay.totalMessageCount).toBe(9);
+    });
+
+    it("defaults to keeping everything when replayLimit is unset", () => {
+        const replay = buildTelegramHistoryReplay(threeTurns, {});
+        const text = textItems(replay);
+
+        expect(text).toContain("question 1");
+        expect(replay.messageCount).toBe(9);
+        expect(replay.totalMessageCount).toBe(9);
+    });
+
+    it("does not crash on a toolResult whose toolCall was sliced away", () => {
+        const orphaned: TelegramHistoryEntry[] = [
+            ...turn(1),
+            { type: "message", message: { role: "user", content: "question 2" } },
+            {
+                type: "message",
+                message: {
+                    role: "toolResult",
+                    toolCallId: "call-1",
+                    toolName: "bash",
+                    isError: true,
+                    content: [{ type: "text", text: "Command failed late" }],
+                },
+            },
+        ];
+
+        expect(() => buildTelegramHistoryReplay(orphaned, { tool: "brief", replayLimit: 1 })).not.toThrow();
+        const replay = buildTelegramHistoryReplay(orphaned, { tool: "brief", replayLimit: 1 });
+        const text = textItems(replay);
+        expect(text).toContain("bash");
+        expect(text).toContain("Command failed late");
+    });
+
+    it("annotates banner and completion when the replay was trimmed", async () => {
+        const sent: string[] = [];
+        const transport: TelegramTransport = {
+            removeInlineKeyboard: async () => undefined,
+            sendText: vi.fn(async (_chatId, text) => {
+                sent.push(text);
+                return [{ message_id: sent.length }];
+            }),
+            sendButtons: async () => ({ message_id: 1 }),
+            editText: async () => undefined,
+            editButtons: async () => undefined,
+            answerCallbackQuery: async () => undefined,
+            deleteMessage: async () => undefined,
+            sendDocument: async () => undefined,
+            sendPhoto: async () => undefined,
+            sendChatAction: async () => undefined,
+        };
+
+        await replayTelegramHistory({
+            entries: threeTurns,
+            config: { tool: "hidden", replayLimit: 1 },
+            transport,
+            target: { chatId: 42 },
+            instance: { cwd: "/w", model: "m", instanceId: "instance-b" },
+        });
+
+        expect(sent[0]).toContain("history:</b> 9 messages (showing last 3)");
+        expect(sent.at(-1)).toContain("Adjust: /tg-config replay");
+    });
+
+    it("omits trim annotations when everything was replayed", async () => {
+        const sent: string[] = [];
+        const transport: TelegramTransport = {
+            removeInlineKeyboard: async () => undefined,
+            sendText: vi.fn(async (_chatId, text) => {
+                sent.push(text);
+                return [{ message_id: sent.length }];
+            }),
+            sendButtons: async () => ({ message_id: 1 }),
+            editText: async () => undefined,
+            editButtons: async () => undefined,
+            answerCallbackQuery: async () => undefined,
+            deleteMessage: async () => undefined,
+            sendDocument: async () => undefined,
+            sendPhoto: async () => undefined,
+            sendChatAction: async () => undefined,
+        };
+
+        await replayTelegramHistory({
+            entries: threeTurns,
+            config: { tool: "hidden" },
+            transport,
+            target: { chatId: 42 },
+            instance: { cwd: "/w", model: "m", instanceId: "instance-c" },
+        });
+
+        expect(sent[0]).toContain("history:</b> 9 messages");
+        expect(sent[0]).not.toContain("showing last");
+        expect(sent.at(-1)).not.toContain("Adjust:");
     });
 });
 

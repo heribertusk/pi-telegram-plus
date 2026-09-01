@@ -5,6 +5,8 @@ export type TelegramMessageMode = "queue" | "steer";
 
 export const RENDER_LEVELS: readonly TelegramRenderLevel[] = ["hidden", "brief", "full"] as const;
 export const MODE_VALUES: readonly TelegramMessageMode[] = ["queue", "steer"] as const;
+export const DEFAULT_REPLAY_LIMIT = 10;
+export const REPLAY_LIMIT_MAX = 500;
 
 export type TelegramConfigStore = {
   version: 2;
@@ -49,6 +51,9 @@ export type TelegramConfig = {
   messageMode?: TelegramMessageMode;
   /** Number of retries for failed Telegram API calls (0 = no retry, default 3). */
   retryCount?: number;
+  /** How many trailing user turns history replay sends after /tg-switch
+   *  (0 = banner only, default 10). Counts user turns, not messages. */
+  replayLimit?: number;
 };
 
 export type TelegramPhotoSize = {

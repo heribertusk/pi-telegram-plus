@@ -32,7 +32,7 @@
 - **Long polling** — receives messages and callback queries in real time
 - **Multi-instance switching** — multiple local pi processes can share one bot token; only one instance is active at a time, selected with `/tg-switch` (see **Multi-instance Coordination**)
 - **Isolated outbound routing** — standby instances cannot leak local assistant output, tool results, UI notifications, typing actions, or `tg_attach` files into the active Telegram chat
-- **Full branch replay** — switching automatically replays the target session's current branch from its first message, including images and the configured `tool` / `thinking` detail levels, then resumes normal routing
+- **Tail replay** — switching automatically replays the target session's current branch, limited to the last N user turns (default 10, `0` = banner only) including images and the configured `tool` / `thinking` detail levels, then resumes normal routing. Adjust with `/tg-config replay <n>`
 - **Heartbeat failover** — when the active local instance disappears, another live instance claims ownership after its heartbeat expires
 - **Automatic reconnection** — exponential backoff on transient polling failures; a file-based polling lock remains the final safety guard against dual pollers
 - **Shared update cursor** — instances sharing a token keep a coordinated `lastUpdateId`, so handoffs do not re-deliver or skip Telegram updates
@@ -127,7 +127,7 @@ Several local pi processes can share one bot token (for example different worksp
    - no args → inline selector listing live instances (`project · session · model · id`)
    - `/tg-switch <instance-id-prefix>` → switch by id or unambiguous prefix
    - `/tg-switch current` → keep the current owner and re-run history replay
-4. **History replay** — after a switch, the new owner stops polling briefly, posts a switch banner (cwd / model / message count), replays the current session branch (user/assistant text, images, and tool/thinking blocks at the configured render levels), then posts `History replay complete` and resumes polling.
+4. **History replay** — after a switch, the new owner stops polling briefly, posts a switch banner (cwd / model / message count), replays the last N user turns of the current session branch (default 10, `0` = banner only; see `/tg-config replay <n>`) — user/assistant text, images, and tool/thinking blocks at the configured render levels — then posts `History replay complete` and resumes polling.
 5. **Automatic failover** — if the active process dies or stops heartbeating, another live instance claims ownership (`reason: failover`) without a manual `/tg-switch`.
 6. **Safety locks** — coordinator state and the polling lock both clean up abandoned candidate/tombstone artifacts automatically. A live `tg-poll-*.lock` directory is still the last line of defense against two pollers.
 
@@ -255,7 +255,7 @@ Common issues and diagnostic steps. The extension writes a structured JSON Lines
 ### `/tg-switch` fails or history replay looks wrong
 - `/tg-switch` only works on the currently active instance. If you see `This pi instance is not the active Telegram instance`, switch from the owner process or wait for failover.
 - The selector only lists processes that are still heartbeating. Restart the missing pi if it does not appear.
-- Replay targets the new owner's current session branch and the chat/topic where the switch was requested. Empty sessions produce a banner with `0 messages` and no body replay.
+- Replay targets the new owner's current session branch and the chat/topic where the switch was requested. Only the last 10 user turns are replayed by default — raise or lower it with `/tg-config replay <n>`, or set `0` to show only the switch banner (total message count, no body messages). Empty sessions produce a banner with `0 messages` and no body replay.
 - A failed replay posts `History replay failed` in Telegram and still completes the handoff so the new owner can accept fresh messages; check the pi log for details.
 
 ### Interactive dialogs (Select / Confirm / Input / Editor) do not appear
