@@ -150,8 +150,8 @@ export function registerModelCommands(
     },
   });
 
-  // ── /thinking ────────────────────────────────────────────────────────
-  registry.registerCommand("thinking", {
+  // ── /tg-thinking ────────────────────────────────────────────────────
+  registry.registerCommand("tg-thinking", {
     description: "Show or change thinking level",
     handler: async (args, ctx) => {
       const ui = ctx.ui;
