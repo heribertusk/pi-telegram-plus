@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package",
   "name": "pi-telegram-plus",
-  "version": "0.0.6",
+  "version": "0.0.6-fork.1",
   "description": "Full Telegram control of pi coding agent — commands, menus, interactive UI, model management, and more",
   "keywords": [
     "pi-package",
@@ -41,7 +41,7 @@
     "url": "https://github.com/jalyfeng/pi-telegram-plus"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.76.0 <0.82.0",
+    "@earendil-works/pi-coding-agent": ">=0.84.0",
     "typebox": "*"
   },
   "dependencies": {
