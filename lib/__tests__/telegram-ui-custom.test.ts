@@ -117,6 +117,79 @@ describe("bridgeCustomDialog — confirmation dialog", () => {
   });
 });
 
+// ---- bridgeCustomDialog: permission gate (pi-guardrails) ----
+
+// Render shape mirroring pi-guardrails' createPermissionGateConfirmComponent:
+// red borders, header, reason, numbered command lines, "Allow execution?",
+// and a TUI keyboard hint line that must not reach Telegram.
+const PERMISSION_RENDER = [
+  "────────────────────────────────────",
+  "Dangerous Command Detected",
+  "",
+  "This command contains rm -rf:",
+  "",
+  "1 rm -rf /tmp/scratch",
+  "2 --no-preserve-root",
+  "",
+  "Allow execution?",
+  "",
+  "↑/↓ or j/k: scroll • y/enter: allow • a: session • n/esc: deny • s: decline & stop",
+  "────────────────────────────────────",
+];
+
+describe("bridgeCustomDialog — permission gate", () => {
+  it("Allow once button → 'allow'", async () => {
+    const { deps, resolveWaitInput, sentButtons } = makeDeps(stubFactory(PERMISSION_RENDER));
+    const resultP = bridgeCustomDialog<string>(deps);
+    resolveWaitInput("allow");
+    const result = await resultP;
+
+    expect(result).toBe("allow");
+    expect(sentButtons[0].rows[0].map((b) => b.value)).toEqual(["allow", "allow-session"]);
+    expect(sentButtons[0].rows[1].map((b) => b.value)).toEqual(["deny", "stop"]);
+  });
+
+  it("Allow session button → 'allow-session'", async () => {
+    const { deps, resolveWaitInput } = makeDeps(stubFactory(PERMISSION_RENDER));
+    const resultP = bridgeCustomDialog<string>(deps);
+    resolveWaitInput("allow-session");
+    const result = await resultP;
+
+    expect(result).toBe("allow-session");
+  });
+
+  it("Decline & stop button → 'stop'", async () => {
+    const { deps, resolveWaitInput } = makeDeps(stubFactory(PERMISSION_RENDER));
+    const resultP = bridgeCustomDialog<string>(deps);
+    resolveWaitInput("stop");
+    const result = await resultP;
+
+    expect(result).toBe("stop");
+  });
+
+  it("cancel/timeout/unknown value → 'deny' (fail-safe)", async () => {
+    const { deps, resolveWaitInput } = makeDeps(stubFactory(PERMISSION_RENDER));
+    const resultP = bridgeCustomDialog<string>(deps);
+    resolveWaitInput(undefined);
+    const result = await resultP;
+
+    expect(result).toBe("deny");
+  });
+
+  it("message body strips borders and keyboard hint", async () => {
+    const { deps, resolveWaitInput, sentButtons } = makeDeps(stubFactory(PERMISSION_RENDER));
+    const resultP = bridgeCustomDialog<string>(deps);
+    resolveWaitInput("deny");
+    await resultP;
+
+    const text = sentButtons[0].text;
+    expect(text).toContain("Dangerous Command Detected");
+    expect(text).toContain("Allow execution?");
+    expect(text).not.toContain("y/enter: allow");
+    expect(text).not.toContain("────");
+  });
+});
+
 // ---- bridgeCustomDialog: single-question ----
 
 const SINGLE_QUESTION_RENDER = [

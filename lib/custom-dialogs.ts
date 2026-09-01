@@ -46,7 +46,7 @@ const CONTINUE_ANSWER = "Continue chatting — keep refining";
 
 const MAX_BUTTON_TEXT = 60;
 
-type DialogShape = "confirmation" | "single-question" | "multi-question" | "unknown";
+type DialogShape = "confirmation" | "single-question" | "multi-question" | "permission-gate" | "unknown";
 
 /** Minimal tui shim satisfying what pi-goal's Editor needs: requestRender + terminal.rows. */
 function buildTuiShim(): { requestRender(): void; terminal: { rows: number } } {
@@ -60,6 +60,10 @@ function truncateLabel(text: string, max = MAX_BUTTON_TEXT): string {
 // ---- Shape detection (operates on ANSI-stripped render text) ----
 
 function detectShape(text: string): DialogShape {
+  // Permission gate (pi-guardrails permission-gate): unmistakable header before
+  // any other check — its numbered command lines could superficially match the
+  // single-question option-row regex.
+  if (text.includes("Dangerous Command Detected")) return "permission-gate";
   // Multi-question questionnaires show a tab bar with "✓ Submit".
   if (text.includes("✓ Submit")) return "multi-question";
   // Confirmation dialog: known header + known trailing options.
@@ -499,6 +503,38 @@ export async function bridgeCustomDialog<T>(deps: BridgeCustomDialogDeps): Promi
     } catch {
       deps.notify("⚠️ Failed to send dialog buttons; the agent will continue.", "warning");
       return { questions: [], answers: [], cancelled: true } as T;
+    }
+  }
+
+  // ---- Permission gate (pi-guardrails permission-gate) ----
+  // Guardrails' component is keyboard-driven (y/a/n/s → done(result)) and its
+  // ConfirmResult strings are exactly the four outcomes, so the buttons map
+  // straight to the result — no handleInput driving needed. Any dismissal
+  // (timeout, /stop, stray tap) resolves "deny": block the command, keep the
+  // agent running — same fail-safe direction as guardrails' own fall-through.
+  if (shape === "permission-gate") {
+    const removeKeyboard = deps.removeKeyboard ?? (async () => {});
+    // Drop TUI-only chrome: border rules and the keyboard hint line.
+    const bodyLines = lines.filter((l) => {
+      const t = l.trim();
+      if (/^─+$/.test(t)) return false;
+      if (/scroll.*allow/.test(t)) return false;
+      return true;
+    });
+    const body = escapeHtml(bodyLines.join("\n").trim());
+    const buttons: ButtonRow[] = [
+      [{ text: "✅ Allow once", value: "allow" }, { text: "🔓 Allow session", value: "allow-session" }],
+      [{ text: "❌ Deny", value: "deny" }, { text: "⏹ Decline & stop", value: "stop" }],
+    ];
+    try {
+      await deps.sendButtons(body, buttons);
+      const value = await deps.waitInput(false, false);
+      void removeKeyboard();
+      if (value === "allow" || value === "allow-session" || value === "stop") return value as T;
+      return "deny" as T;
+    } catch {
+      deps.notify("⚠️ Permission prompt failed; the command was denied.", "warning");
+      return "deny" as T;
     }
   }
 
