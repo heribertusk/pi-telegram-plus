@@ -22,6 +22,21 @@ function outboundAttachmentLimit(): number {
 
 const SENSITIVE_PATH_PREFIXES = ["/etc", "/.ssh", "/root/.ssh"];
 
+const SENSITIVE_HOME_SUBDIRS = [".ssh", ".aws", ".gnupg", ".kube", ".docker", ".config/gcloud"];
+
+// ponytail: pattern blocklist, not allowlist — an allowlist (workspace cwd only) is stricter but
+// breaks legit sends from anywhere on disk; flip if exfil risk ever outweighs convenience.
+const SENSITIVE_BASENAME_PATTERNS = [
+  /^\.env(\..+)?$/i,
+  /^id_(rsa|dsa|ecdsa|ed25519)(\.\d+)?$/i,
+  /\.(pem|key)$/i,
+];
+
+function extraSensitiveRoots(): string[] {
+  const raw = process.env.PI_TELEGRAM_SENSITIVE_PATHS?.trim();
+  return raw ? raw.split(":").map((entry) => entry.trim()).filter(Boolean) : [];
+}
+
 function canonicalizeExistingPath(path: string): string {
   try { return realpathSync(path); }
   catch { return path; }
@@ -44,14 +59,19 @@ export function isSensitiveAttachmentRealPath(realPath: string, home = process.e
     roots.add(canonicalizeExistingPath(prefix));
   }
   if (home) {
-    const homeSsh = resolve(home, ".ssh");
-    roots.add(homeSsh);
-    roots.add(canonicalizeExistingPath(homeSsh));
+    for (const sub of SENSITIVE_HOME_SUBDIRS) {
+      const dir = resolve(home, sub);
+      roots.add(dir);
+      roots.add(canonicalizeExistingPath(dir));
+    }
+  }
+  for (const extra of extraSensitiveRoots()) {
+    roots.add(resolve(extra));
   }
   for (const root of roots) {
     if (isPathAtOrInside(realPath, root)) return true;
   }
-  return false;
+  return SENSITIVE_BASENAME_PATTERNS.some((pattern) => pattern.test(basename(realPath)));
 }
 
 function isPhotoPath(path: string): boolean {

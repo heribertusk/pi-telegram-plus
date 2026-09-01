@@ -130,7 +130,20 @@ describe("tg attachment tool and queue sender", () => {
     expect(isSensitiveAttachmentRealPath("/etc", "/home/alice")).toBe(true);
     expect(isSensitiveAttachmentRealPath("/etc2/passwd", "/home/alice")).toBe(false);
     expect(isSensitiveAttachmentRealPath("/home/alice/.ssh/id_rsa", "/home/alice")).toBe(true);
-    expect(isSensitiveAttachmentRealPath("/home/alice/.ssh2/id_rsa", "/home/alice")).toBe(false);
+    // .ssh2 must not match the .ssh prefix — use a neutral filename for the boundary check.
+    expect(isSensitiveAttachmentRealPath("/home/alice/.ssh2/notes.txt", "/home/alice")).toBe(false);
+  });
+
+  it("blocks secret-basename and credential-dir patterns anywhere on disk", () => {
+    expect(isSensitiveAttachmentRealPath("/home/alice/.ssh2/id_rsa", "/home/alice")).toBe(true);
+    expect(isSensitiveAttachmentRealPath("/tmp/project/.env", "/home/alice")).toBe(true);
+    expect(isSensitiveAttachmentRealPath("/tmp/project/.env.production", "/home/alice")).toBe(true);
+    expect(isSensitiveAttachmentRealPath("/tmp/project/cert.pem", "/home/alice")).toBe(true);
+    expect(isSensitiveAttachmentRealPath("/tmp/project/server.key", "/home/alice")).toBe(true);
+    expect(isSensitiveAttachmentRealPath("/home/alice/.aws/credentials", "/home/alice")).toBe(true);
+    expect(isSensitiveAttachmentRealPath("/home/alice/.gnupg/secring.kbx", "/home/alice")).toBe(true);
+    expect(isSensitiveAttachmentRealPath("/home/alice/.kube/config", "/home/alice")).toBe(true);
+    expect(isSensitiveAttachmentRealPath("/home/alice/notes.txt", "/home/alice")).toBe(false);
   });
 
   it("sends attachments directly when no active turn but default chat id is configured", async () => {
